@@ -134,8 +134,8 @@
     .tmap-btn:active { background: #1558c0; }
 
     /* ── 지도 ── */
-    #screen-map .map-wrap { flex: 1; min-height: 0; position: relative; overflow: hidden; }
-    #kakao-map { position: absolute; top: 0; left: 0; right: 0; bottom: 0; }
+    #screen-map .map-wrap { flex: 1; min-height: 0; overflow: hidden; }
+    #kakao-map { display: block; width: 100%; }
 
     /* ── 설정 화면 ── */
     .settings-body { flex: 1; overflow-y: auto; padding: 12px; display: flex; flex-direction: column; gap: 10px; }
@@ -838,10 +838,18 @@ function openMapScreen(title, renderFn) {
 
 function makeLeafMap(lat, lng, zoom) {
   const container = document.getElementById('kakao-map');
+  const wrap = container.parentElement;
+  // Leaflet needs explicit px height — calculate from available space
+  const h = wrap.clientHeight || (window.innerHeight - 52);
+  container.style.height = h + 'px';
+  container.style.width = '100%';
+
+  if (leafMap) { try { leafMap.remove(); } catch(e) {} leafMap = null; }
   leafMap = L.map(container, { zoomControl: true }).setView([lat, lng], zoom);
   L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-    attribution: '© OpenStreetMap'
+    maxZoom: 19, attribution: '© OpenStreetMap'
   }).addTo(leafMap);
+  setTimeout(() => { try { leafMap.invalidateSize(); } catch(e) {} }, 200);
   return leafMap;
 }
 

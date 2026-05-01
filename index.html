@@ -542,11 +542,10 @@ function renderList() {
 
   el.innerHTML = todayItems.map(item => `
     <div class="delivery-item ${item.urgent?'urgent':''} ${item.selected?'selected':''}"
-         onclick="toggleItem('${item.id}')">
+         onclick="showMapItem('${item.id}')">
       <input type="checkbox" ${item.selected?'checked':''} onclick="event.stopPropagation();toggleItem('${item.id}')">
-      <span class="addr-text">${item.full} (${item.order})</span>
+      <span class="addr-text">${item.order}:${item.full}</span>
       ${item.urgent ? '<span class="urgent-badge">긴급</span>' : ''}
-      <button class="map-preview-btn" onclick="event.stopPropagation();showMapItem('${item.id}')">지도</button>
       <button class="tmap-btn" onclick="event.stopPropagation();openTmap('${item.id}')">T맵</button>
     </div>`).join('');
 
@@ -730,7 +729,7 @@ function showMapItem(id) {
 }
 function _renderSingleMap(item) {
   prevScreen = 'list';
-  document.getElementById('map-title').textContent = item.full;
+  document.getElementById('map-title').textContent = `${item.order}:${item.full}`;
   document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
   document.getElementById('screen-map').classList.add('active');
   setTimeout(() => {
@@ -739,10 +738,24 @@ function _renderSingleMap(item) {
     if (!kakaoMapObj) kakaoMapObj = new kakao.maps.Map(container, { center: latlng, level: 3 });
     else { kakaoMapObj.relayout(); kakaoMapObj.setCenter(latlng); kakaoMapObj.setLevel(3); }
     clearMarkers();
+
+    // 오늘 전체 배송지도 작은 마커로 표시
+    const today = todayStr();
+    items.filter(x => x.date === today && x.lat && x.lng && x.id !== item.id).forEach(x => {
+      const pos = new kakao.maps.LatLng(x.lat, x.lng);
+      const m = new kakao.maps.Marker({ map: kakaoMapObj, position: pos });
+      mapMarkers.push(m);
+      const iw = new kakao.maps.InfoWindow({
+        content: `<div style="padding:4px 8px;font-size:12px;">${x.order}:${x.full}</div>`
+      });
+      kakao.maps.event.addListener(m, 'click', () => iw.open(kakaoMapObj, m));
+    });
+
+    // 선택된 항목 강조 마커
     const m = new kakao.maps.Marker({ map: kakaoMapObj, position: latlng });
     mapMarkers.push(m);
     new kakao.maps.InfoWindow({
-      content: `<div style="padding:7px 10px;font-size:13px;max-width:220px;line-height:1.4;"><b>${item.order}번.</b> ${item.full}${item.urgent?' 🔴':''}</div>`
+      content: `<div style="padding:7px 10px;font-size:13px;max-width:220px;line-height:1.4;font-weight:bold;">${item.order}:${item.full}${item.urgent?' 🔴':''}</div>`
     }).open(kakaoMapObj, m);
   }, 80);
 }

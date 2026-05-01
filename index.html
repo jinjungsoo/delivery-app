@@ -1,0 +1,777 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="배송주소">
+  <title>배송주소빨리찾기</title>
+  <script src="//dapi.kakao.com/v2/maps/sdk.js?appkey=474834d88284e77adc467c775997a2fe&libraries=services"></script>
+  <script src="//t1.daumcdn.net/mapjsapi/bundle/postcode/prod/postcode.v2.js"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
+    html, body { height: 100%; overflow: hidden; font-family: 'Malgun Gothic', 'Apple SD Gothic Neo', sans-serif; }
+
+    .screen { display: none; height: 100dvh; flex-direction: column; background: #f0f0f0; }
+    .screen.active { display: flex; }
+
+    /* ── Header ── */
+    .header {
+      background: #3F51B5;
+      color: white;
+      padding: 0 14px;
+      height: 52px;
+      min-height: 52px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      font-size: 19px;
+      font-weight: bold;
+    }
+    .header-btn { background: none; border: none; color: white; font-size: 22px; cursor: pointer; padding: 4px 8px; }
+
+    /* ── Address rows ── */
+    .addr-row {
+      display: grid;
+      grid-template-columns: 46px 1fr auto auto;
+      align-items: center;
+      gap: 5px;
+      padding: 5px 7px;
+      background: white;
+      border-bottom: 1px solid #e0e0e0;
+    }
+    .addr-label { font-size: 13px; color: #333; font-weight: bold; text-align: center; }
+    .addr-input {
+      border: 2px solid #ccc;
+      padding: 7px 8px;
+      font-size: 14px;
+      border-radius: 4px;
+      background: #f5f5f5;
+      color: #333;
+      cursor: pointer;
+      outline: none;
+      width: 100%;
+    }
+    .addr-input.focused { border-color: #3F51B5; background: white; }
+
+    /* ── Buttons ── */
+    .btn {
+      padding: 7px 10px;
+      border: 1px solid #bbb;
+      background: #e8e8e8;
+      border-radius: 4px;
+      font-size: 13px;
+      cursor: pointer;
+      color: #1A237E;
+      font-weight: bold;
+      white-space: nowrap;
+      user-select: none;
+    }
+    .btn:active { background: #c8c8c8; }
+    .btn.wide { width: 100%; margin: 0 6px 4px; width: calc(100% - 12px); }
+
+    /* ── Keypad ── */
+    .keypad {
+      display: grid;
+      grid-template-columns: repeat(6, 1fr);
+      grid-template-rows: repeat(4, 1fr);
+      gap: 3px;
+      padding: 5px;
+      background: #c8c8c8;
+      flex: 1;
+      min-height: 0;
+    }
+    .key {
+      background: #e8e8e8;
+      border: 1px solid #aaa;
+      border-radius: 4px;
+      font-size: 15px;
+      font-weight: bold;
+      color: #e53935;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      user-select: none;
+      text-align: center;
+      line-height: 1.2;
+    }
+    .key.dark  { color: #212121; }
+    .key.blue  { color: #1565C0; font-size: 13px; }
+    .key.span2 { grid-row: span 2; font-size: 13px; color: #1565C0; }
+    .key:active { background: #b0b0b0; }
+
+    /* ── Region bar ── */
+    .region-bar {
+      background: white;
+      border-top: 1px solid #ddd;
+      padding: 5px 8px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      overflow-x: auto;
+      min-height: 36px;
+    }
+    .urgent-wrap { display: flex; align-items: center; gap: 4px; flex-shrink: 0; }
+    .urgent-wrap label { font-size: 13px; color: #e53935; font-weight: bold; cursor: pointer; }
+    .divider-v { width: 1px; height: 18px; background: #ccc; flex-shrink: 0; }
+    .region-item {
+      display: flex; align-items: center; gap: 3px;
+      font-size: 12px; cursor: pointer; white-space: nowrap; flex-shrink: 0;
+    }
+    .region-item input { cursor: pointer; }
+
+    /* ── Region display ── */
+    .region-display {
+      background: #f5f5f5;
+      border-top: 1px solid #e0e0e0;
+      padding: 3px 10px;
+      font-size: 12px;
+      color: #555;
+      min-height: 22px;
+    }
+
+    /* ── List screen ── */
+    .action-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr 1fr;
+      gap: 3px;
+      padding: 5px 5px 2px;
+      background: white;
+      border-bottom: 1px solid #ddd;
+    }
+    .action-grid .btn { font-size: 12px; padding: 8px 4px; }
+
+    .list-header {
+      display: flex;
+      align-items: center;
+      padding: 8px 12px;
+      background: #e0e0e0;
+      border-bottom: 1px solid #ccc;
+      gap: 10px;
+      min-height: 40px;
+    }
+    .list-header label { font-size: 14px; cursor: pointer; }
+    .list-date { color: #e53935; font-weight: bold; font-size: 14px; margin-left: auto; }
+
+    .delivery-list { flex: 1; overflow-y: auto; -webkit-overflow-scrolling: touch; }
+    .delivery-item {
+      display: flex;
+      align-items: center;
+      padding: 9px 11px;
+      border-bottom: 1px solid #e8e8e8;
+      background: white;
+      gap: 9px;
+      cursor: pointer;
+    }
+    .delivery-item.urgent  { background: #fff8e1; }
+    .delivery-item.selected { background: #e3f2fd; }
+    .delivery-item .seq { font-size: 12px; color: #888; min-width: 18px; text-align: center; }
+    .delivery-item .info { flex: 1; min-width: 0; }
+    .delivery-item .full-addr { font-size: 13px; color: #222; font-weight: 500; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .delivery-item .meta { font-size: 11px; color: #999; }
+    .urgent-badge { font-size: 10px; background: #e53935; color: white; padding: 2px 6px; border-radius: 3px; flex-shrink: 0; }
+    .empty-msg { padding: 30px; text-align: center; color: #aaa; font-size: 14px; }
+
+    /* ── Bottom nav ── */
+    .bottom-nav { display: flex; background: white; border-top: 1px solid #ddd; }
+    .nav-btn {
+      flex: 1; border: none; background: none; cursor: pointer;
+      padding: 8px 0; display: flex; flex-direction: column;
+      align-items: center; gap: 2px; color: #888; font-size: 11px;
+    }
+    .nav-btn .ico { font-size: 20px; }
+    .nav-btn.on { color: #3F51B5; }
+
+    /* ── Map screen ── */
+    #kakao-map { width: 100%; height: 100%; }
+    #screen-map .map-wrap { flex: 1; position: relative; min-height: 0; }
+
+    /* ── Toast ── */
+    .toast {
+      position: fixed; bottom: 70px; left: 50%; transform: translateX(-50%);
+      background: rgba(0,0,0,0.72); color: white; padding: 9px 18px;
+      border-radius: 20px; font-size: 13px; z-index: 999; pointer-events: none;
+      opacity: 0; transition: opacity 0.2s;
+    }
+    .toast.show { opacity: 1; }
+
+    input[type="checkbox"], input[type="radio"] { width: 16px; height: 16px; cursor: pointer; flex-shrink: 0; }
+
+    /* ── TMap button ── */
+    .tmap-btn {
+      flex-shrink: 0;
+      background: #1A73E8;
+      color: white;
+      border: none;
+      border-radius: 4px;
+      padding: 5px 9px;
+      font-size: 11px;
+      font-weight: bold;
+      cursor: pointer;
+    }
+    .tmap-btn:active { background: #1558c0; }
+  </style>
+</head>
+<body>
+
+<!-- ══════════════ SCREEN: 주소입력 ══════════════ -->
+<div id="screen-main" class="screen active">
+  <div class="header">
+    <span>주소빨리찾기V2</span>
+    <button class="header-btn" onclick="showScreen('list')">≡</button>
+  </div>
+
+  <!-- 주소 前 -->
+  <div class="addr-row">
+    <span class="addr-label">주소 前</span>
+    <div class="addr-input focused" id="disp-before" onclick="setFocus('before')" style="min-height:34px;">&nbsp;</div>
+    <button class="btn" onclick="searchAddress()">찾 기</button>
+    <button class="btn" onclick="showMap('delivery')">지 도</button>
+  </div>
+
+  <!-- 주소 後 -->
+  <div class="addr-row">
+    <span class="addr-label">주소 後</span>
+    <div class="addr-input" id="disp-after" onclick="setFocus('after')" style="min-height:34px;">&nbsp;</div>
+    <button class="btn" onclick="openSettings()">설 정</button>
+    <button class="btn" onclick="showScreen('list')">목 록</button>
+  </div>
+
+  <!-- 키패드 -->
+  <div class="keypad">
+    <!-- col 1-4 row 1 -->
+    <div class="key" onclick="kp('1')">1</div>
+    <div class="key" onclick="kp('2')">2</div>
+    <div class="key" onclick="kp('3')">3</div>
+    <div class="key dark" onclick="kp('←')">←</div>
+    <!-- col 5-6 span 2 rows: 배송등록, 배송주소 -->
+    <div class="key span2" onclick="registerDelivery()" style="grid-column:5; grid-row:1/3;">배송<br>등록</div>
+    <div class="key span2" onclick="showScreen('list')" style="grid-column:6; grid-row:1/3;">배송<br>주소</div>
+    <!-- row 2 col 1-4 -->
+    <div class="key" onclick="kp('4')">4</div>
+    <div class="key" onclick="kp('5')">5</div>
+    <div class="key" onclick="kp('6')">6</div>
+    <div class="key dark" onclick="kp('로')">로</div>
+    <!-- row 3 -->
+    <div class="key" onclick="kp('7')">7</div>
+    <div class="key" onclick="kp('8')">8</div>
+    <div class="key" onclick="kp('9')">9</div>
+    <div class="key dark" onclick="kp('길')">길</div>
+    <div class="key dark" onclick="kp('가길')">가길</div>
+    <div class="key dark" onclick="kp('나길')">나길</div>
+    <!-- row 4 -->
+    <div class="key dark" onclick="kp('-')">—</div>
+    <div class="key" onclick="kp('0')">0</div>
+    <div class="key dark" onclick="kp(' ')" style="font-size:11px;">공백</div>
+    <div class="key dark" onclick="kp('안길')">안길</div>
+    <div class="key dark" onclick="kp('다길')">다길</div>
+    <div class="key dark" onclick="kp('번길')">번길</div>
+  </div>
+
+  <!-- 긴급 + 지역 -->
+  <div class="region-bar">
+    <div class="urgent-wrap">
+      <input type="checkbox" id="urgent-chk">
+      <label for="urgent-chk">긴급</label>
+    </div>
+    <div class="divider-v"></div>
+    <div id="region-radios" style="display:flex;gap:10px;flex-wrap:nowrap;"></div>
+  </div>
+  <div class="region-display" id="region-display">전국모드</div>
+</div>
+
+
+<!-- ══════════════ SCREEN: 배송리스트 ══════════════ -->
+<div id="screen-list" class="screen">
+  <div class="header">
+    <span>배송 리스트</span>
+    <button class="header-btn" onclick="showScreen('main')">✕</button>
+  </div>
+
+  <div class="action-grid">
+    <button class="btn" onclick="showMap('delivery')">지도1 (배송지)</button>
+    <button class="btn" onclick="deleteSelected()">선택한주소 삭제</button>
+    <button class="btn" onclick="toggleUrgentSelected()">긴급변경</button>
+    <button class="btn" onclick="showMap('current')">지도2 (내위치)</button>
+    <button class="btn" onclick="moveToNextDay()">선택한주소 이월</button>
+    <button class="btn" onclick="reorderSelected()">순서변경</button>
+  </div>
+  <button class="btn wide" onclick="changeUser()">선택한주소 사용자 변경</button>
+  <button class="btn wide" onclick="openTmapSelected()"
+    style="background:#1A73E8;color:white;border-color:#1A73E8;margin-top:0;">
+    🚗 T맵 연속 길안내 (선택 순서대로)
+  </button>
+
+  <div class="list-header">
+    <input type="checkbox" id="select-all" onchange="toggleSelectAll(this.checked)">
+    <label for="select-all">전체선택</label>
+    <span class="list-date" id="list-date"></span>
+  </div>
+
+  <div class="delivery-list" id="delivery-list"></div>
+
+  <div class="bottom-nav">
+    <button class="nav-btn" onclick="showScreen('main')">
+      <span class="ico">🔍</span>주소입력
+    </button>
+    <button class="nav-btn on">
+      <span class="ico">📋</span>배송리스트
+    </button>
+    <button class="nav-btn" onclick="showMap('delivery')">
+      <span class="ico">🗺️</span>지도보기
+    </button>
+  </div>
+</div>
+
+
+<!-- ══════════════ SCREEN: 지도 ══════════════ -->
+<div id="screen-map" class="screen">
+  <div class="header">
+    <button class="header-btn" style="font-size:16px;" onclick="goBack()">← 뒤로</button>
+    <span id="map-title">배송지 지도</span>
+    <span style="width:40px;"></span>
+  </div>
+  <div class="map-wrap">
+    <div id="kakao-map"></div>
+  </div>
+</div>
+
+
+<div class="toast" id="toast"></div>
+
+
+<script>
+// ════════════════════════════════════════════
+//  STATE
+// ════════════════════════════════════════════
+const KAKAO_KEY = '474834d88284e77adc467c775997a2fe';
+const REGIONS   = ['전국모드', '곽남', '병영성', '병영', '기타'];
+
+let focusedInput = 'before';  // 'before' | 'after'
+let addrBefore   = '';
+let addrAfter    = '';
+let activeRegion = '전국모드';
+let prevScreen   = 'main';
+let kakaoMapObj  = null;
+let geocoder     = null;
+let mapMarkers   = [];
+
+// ════════════════════════════════════════════
+//  DATA (localStorage)
+// ════════════════════════════════════════════
+function loadItems() {
+  try { return JSON.parse(localStorage.getItem('dlv-items') || '[]'); }
+  catch { return []; }
+}
+function saveItems(arr) {
+  localStorage.setItem('dlv-items', JSON.stringify(arr));
+}
+let items = loadItems();
+
+function todayStr() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+}
+function uid() { return Date.now().toString(36) + Math.random().toString(36).slice(2,6); }
+
+// ════════════════════════════════════════════
+//  TOAST
+// ════════════════════════════════════════════
+let toastTimer;
+function toast(msg) {
+  const el = document.getElementById('toast');
+  el.textContent = msg;
+  el.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => el.classList.remove('show'), 2200);
+}
+
+// ════════════════════════════════════════════
+//  SCREENS
+// ════════════════════════════════════════════
+function showScreen(name) {
+  const cur = document.querySelector('.screen.active');
+  if (cur) prevScreen = cur.id.replace('screen-', '');
+  document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
+  document.getElementById('screen-' + name).classList.add('active');
+  if (name === 'list') renderList();
+}
+function goBack() { showScreen(prevScreen || 'main'); }
+
+// ════════════════════════════════════════════
+//  INPUT DISPLAY
+// ════════════════════════════════════════════
+function renderInputs() {
+  document.getElementById('disp-before').textContent = addrBefore || ' ';
+  document.getElementById('disp-after').textContent  = addrAfter  || ' ';
+  document.getElementById('disp-before').classList.toggle('focused', focusedInput === 'before');
+  document.getElementById('disp-after').classList.toggle('focused', focusedInput === 'after');
+}
+function setFocus(which) {
+  focusedInput = which;
+  renderInputs();
+}
+renderInputs();
+
+// ════════════════════════════════════════════
+//  KEYPAD
+// ════════════════════════════════════════════
+function kp(k) {
+  if (focusedInput === 'before') {
+    addrBefore = k === '←' ? addrBefore.slice(0,-1) : addrBefore + k;
+  } else {
+    addrAfter = k === '←' ? addrAfter.slice(0,-1) : addrAfter + k;
+  }
+  renderInputs();
+}
+
+// ════════════════════════════════════════════
+//  REGION
+// ════════════════════════════════════════════
+function buildRegionRadios() {
+  const el = document.getElementById('region-radios');
+  el.innerHTML = REGIONS.map(r => `
+    <label class="region-item">
+      <input type="radio" name="rgn" value="${r}" ${r===activeRegion?'checked':''} onchange="setRegion('${r}')">
+      ${r}
+    </label>`).join('');
+}
+function setRegion(r) {
+  activeRegion = r;
+  document.getElementById('region-display').textContent = r;
+}
+buildRegionRadios();
+
+// ════════════════════════════════════════════
+//  ADDRESS SEARCH (Daum Postcode)
+// ════════════════════════════════════════════
+function searchAddress() {
+  new daum.Postcode({
+    oncomplete(data) {
+      addrBefore = data.roadAddress || data.jibunAddress;
+      addrAfter  = '';
+      focusedInput = 'after';
+      renderInputs();
+    }
+  }).open();
+}
+
+// ════════════════════════════════════════════
+//  REGISTER DELIVERY
+// ════════════════════════════════════════════
+function registerDelivery() {
+  const bef = addrBefore.trim();
+  if (!bef) { toast('주소를 입력하세요'); return; }
+  const aft   = addrAfter.trim();
+  const full  = aft ? `${bef} ${aft}` : bef;
+  const urgent = document.getElementById('urgent-chk').checked;
+
+  const item = {
+    id: uid(), date: todayStr(),
+    before: bef, after: aft, full,
+    region: activeRegion !== '전국모드' ? activeRegion : '',
+    urgent, selected: false,
+    lat: null, lng: null,
+    order: items.filter(x => x.date === todayStr()).length + 1
+  };
+
+  const doSave = () => {
+    items.push(item);
+    saveItems(items);
+    toast(`등록 완료 · ${full}`);
+    addrBefore = ''; addrAfter = '';
+    document.getElementById('urgent-chk').checked = false;
+    focusedInput = 'before';
+    renderInputs();
+  };
+
+  if (geocoder) {
+    geocoder.addressSearch(full, (res, status) => {
+      if (status === kakao.maps.services.Status.OK) {
+        item.lat = parseFloat(res[0].y);
+        item.lng = parseFloat(res[0].x);
+      }
+      doSave();
+    });
+  } else {
+    doSave();
+  }
+}
+
+// ════════════════════════════════════════════
+//  DELIVERY LIST RENDER
+// ════════════════════════════════════════════
+function renderList() {
+  const today = todayStr();
+  document.getElementById('list-date').textContent = today;
+
+  const todayItems = items
+    .filter(x => x.date === today)
+    .sort((a,b) => a.order - b.order);
+
+  const el = document.getElementById('delivery-list');
+
+  if (!todayItems.length) {
+    el.innerHTML = '<div class="empty-msg">등록된 배송지가 없습니다</div>';
+    document.getElementById('select-all').checked = false;
+    return;
+  }
+
+  el.innerHTML = todayItems.map(item => `
+    <div class="delivery-item ${item.urgent?'urgent':''} ${item.selected?'selected':''}"
+         onclick="toggleItem('${item.id}')">
+      <input type="checkbox" ${item.selected?'checked':''} onclick="event.stopPropagation();toggleItem('${item.id}')">
+      <span class="seq">${item.order}</span>
+      <div class="info">
+        <div class="full-addr">${item.full}</div>
+        ${item.region ? `<div class="meta">${item.region}</div>` : ''}
+      </div>
+      ${item.urgent ? '<span class="urgent-badge">긴급</span>' : ''}
+      <button class="tmap-btn" onclick="event.stopPropagation();openTmap('${item.id}')">T맵</button>
+    </div>`).join('');
+
+  const all = todayItems.every(x => x.selected);
+  document.getElementById('select-all').checked = todayItems.length > 0 && all;
+}
+
+function toggleItem(id) {
+  const item = items.find(x => x.id === id);
+  if (!item) return;
+  item.selected = !item.selected;
+  saveItems(items);
+  renderList();
+}
+function toggleSelectAll(checked) {
+  items.filter(x => x.date === todayStr()).forEach(x => x.selected = checked);
+  saveItems(items);
+  renderList();
+}
+
+// ════════════════════════════════════════════
+//  LIST ACTIONS
+// ════════════════════════════════════════════
+function selectedToday() { return items.filter(x => x.selected && x.date === todayStr()); }
+
+function deleteSelected() {
+  const sel = selectedToday();
+  if (!sel.length) { toast('선택한 주소가 없습니다'); return; }
+  if (!confirm(`${sel.length}건을 삭제할까요?`)) return;
+  items = items.filter(x => !x.selected);
+  reorderDay(todayStr());
+  saveItems(items);
+  renderList();
+  toast('삭제 완료');
+}
+
+function toggleUrgentSelected() {
+  const sel = selectedToday();
+  if (!sel.length) { toast('선택한 주소가 없습니다'); return; }
+  sel.forEach(x => x.urgent = !x.urgent);
+  saveItems(items);
+  renderList();
+  toast('긴급 변경 완료');
+}
+
+function moveToNextDay() {
+  const sel = selectedToday();
+  if (!sel.length) { toast('선택한 주소가 없습니다'); return; }
+  const d = new Date(); d.setDate(d.getDate() + 1);
+  const next = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+  sel.forEach(x => { x.date = next; x.selected = false; x.order = 99; });
+  reorderDay(next);
+  saveItems(items);
+  renderList();
+  toast(`${sel.length}건 → ${next} 이월`);
+}
+
+function reorderSelected() {
+  const sel = selectedToday();
+  if (!sel.length) { toast('순서를 바꿀 항목을 선택하세요'); return; }
+  const n = parseInt(prompt(`선택한 ${sel.length}건을 몇 번째 순서로 이동할까요?`), 10);
+  if (isNaN(n) || n < 1) return;
+  const today = todayStr();
+  const rest  = items.filter(x => x.date === today && !x.selected);
+  const idx   = Math.min(n - 1, rest.length);
+  rest.splice(idx, 0, ...sel);
+  rest.forEach((x, i) => x.order = i + 1);
+  saveItems(items);
+  renderList();
+  toast('순서 변경 완료');
+}
+
+function changeUser() {
+  const sel = selectedToday();
+  if (!sel.length) { toast('선택한 주소가 없습니다'); return; }
+  const user = prompt('사용자 이름:');
+  if (!user) return;
+  sel.forEach(x => { x.user = user; x.selected = false; });
+  saveItems(items);
+  renderList();
+  toast(`${sel.length}건 → ${user}`);
+}
+
+function reorderDay(date) {
+  items.filter(x => x.date === date)
+       .sort((a,b) => a.order - b.order)
+       .forEach((x, i) => x.order = i + 1);
+}
+
+// ════════════════════════════════════════════
+//  SETTINGS
+// ════════════════════════════════════════════
+function openSettings() {
+  const r = prompt(`지역 목록: ${REGIONS.join(', ')}\n\n추가할 지역명 입력 (취소=닫기):`);
+  if (r && r.trim() && !REGIONS.includes(r.trim())) {
+    REGIONS.push(r.trim());
+    buildRegionRadios();
+    toast(`${r.trim()} 추가됨`);
+  }
+}
+
+// ════════════════════════════════════════════
+//  MAP
+// ════════════════════════════════════════════
+function showMap(mode) {
+  prevScreen = document.querySelector('.screen.active')?.id.replace('screen-','') || 'main';
+  document.getElementById('map-title').textContent = mode === 'current' ? '내 위치' : '배송지 지도';
+  document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
+  document.getElementById('screen-map').classList.add('active');
+  setTimeout(() => initMap(mode), 80);
+}
+
+function clearMarkers() {
+  mapMarkers.forEach(m => m.setMap(null));
+  mapMarkers = [];
+}
+
+function initMap(mode) {
+  const container = document.getElementById('kakao-map');
+
+  if (mode === 'current') {
+    navigator.geolocation.getCurrentPosition(pos => {
+      const latlng = new kakao.maps.LatLng(pos.coords.latitude, pos.coords.longitude);
+      if (!kakaoMapObj) {
+        kakaoMapObj = new kakao.maps.Map(container, { center: latlng, level: 4 });
+      } else {
+        kakaoMapObj.relayout();
+        kakaoMapObj.setCenter(latlng);
+      }
+      clearMarkers();
+      const m = new kakao.maps.Marker({ map: kakaoMapObj, position: latlng, title: '현재 위치' });
+      mapMarkers.push(m);
+      const iw = new kakao.maps.InfoWindow({ content: '<div style="padding:6px;font-size:13px;">📍 현재 위치</div>' });
+      iw.open(kakaoMapObj, m);
+    }, () => {
+      toast('위치 권한을 허용해주세요');
+      fallbackMap(container);
+    });
+
+  } else {
+    const today = todayStr();
+    const geo = items.filter(x => x.date === today && x.lat && x.lng);
+    const center = geo.length
+      ? new kakao.maps.LatLng(geo[0].lat, geo[0].lng)
+      : new kakao.maps.LatLng(35.1595, 128.9861); // 창원 기본
+
+    if (!kakaoMapObj) {
+      kakaoMapObj = new kakao.maps.Map(container, { center, level: 7 });
+    } else {
+      kakaoMapObj.relayout();
+    }
+    clearMarkers();
+
+    if (!geo.length) {
+      toast('지도에 표시할 배송지가 없습니다\n(주소 등록 후 이용)');
+      kakaoMapObj.setCenter(center);
+      return;
+    }
+
+    const bounds = new kakao.maps.LatLngBounds();
+    geo.forEach(item => {
+      const pos = new kakao.maps.LatLng(item.lat, item.lng);
+      bounds.extend(pos);
+      const m = new kakao.maps.Marker({ map: kakaoMapObj, position: pos, title: item.full });
+      mapMarkers.push(m);
+      const iw = new kakao.maps.InfoWindow({
+        content: `<div style="padding:6px 8px;font-size:12px;max-width:220px;">
+          <b>${item.order}.</b> ${item.full}
+          ${item.urgent ? ' <span style="color:#e53935">🔴긴급</span>' : ''}
+        </div>`
+      });
+      kakao.maps.event.addListener(m, 'click', () => iw.open(kakaoMapObj, m));
+    });
+    kakaoMapObj.setBounds(bounds);
+  }
+}
+
+function fallbackMap(container) {
+  if (!kakaoMapObj) {
+    kakaoMapObj = new kakao.maps.Map(container, {
+      center: new kakao.maps.LatLng(35.1595, 128.9861), level: 8
+    });
+  } else {
+    kakaoMapObj.relayout();
+  }
+}
+
+// ════════════════════════════════════════════
+//  TMAP
+// ════════════════════════════════════════════
+function openTmap(id) {
+  const item = items.find(x => x.id === id);
+  if (!item) return;
+
+  let url;
+  if (item.lat && item.lng) {
+    // 좌표 있으면 바로 길안내
+    url = `tmap://route?goalx=${item.lng}&goaly=${item.lat}&goalname=${encodeURIComponent(item.full)}`;
+  } else {
+    // 좌표 없으면 주소 검색
+    url = `tmap://search?name=${encodeURIComponent(item.full)}`;
+  }
+
+  // TMap 앱 실행 시도 → 미설치시 플레이스토어로
+  const a = document.createElement('a');
+  a.href = url;
+  a.click();
+
+  // 1.5초 후 앱이 안 열리면 플레이스토어 안내
+  setTimeout(() => {
+    if (document.hasFocus()) {
+      if (confirm('T맵 앱이 설치되어 있지 않습니다.\n플레이스토어로 이동할까요?')) {
+        window.open('https://play.google.com/store/apps/details?id=com.skt.tmap.ku', '_blank');
+      }
+    }
+  }, 1500);
+}
+
+// 선택한 주소 TMap 연속 안내 (첫 번째 → 나머지 순서대로 경유지)
+function openTmapSelected() {
+  const sel = selectedToday().sort((a,b) => a.order - b.order);
+  if (!sel.length) { toast('선택한 주소가 없습니다'); return; }
+  if (sel.length === 1) { openTmap(sel[0].id); return; }
+
+  // TMap 다중 경유지: tmap://route?goalx=...&waypoint1x=...
+  const goal = sel[sel.length - 1];
+  let url = `tmap://route?goalx=${goal.lng||0}&goaly=${goal.lat||0}&goalname=${encodeURIComponent(goal.full)}`;
+  sel.slice(0, -1).forEach((wp, i) => {
+    if (wp.lat && wp.lng) {
+      url += `&waypoint${i+1}x=${wp.lng}&waypoint${i+1}y=${wp.lat}&waypoint${i+1}name=${encodeURIComponent(wp.full)}`;
+    }
+  });
+  const a = document.createElement('a'); a.href = url; a.click();
+}
+
+// ════════════════════════════════════════════
+//  INIT
+// ════════════════════════════════════════════
+try {
+  geocoder = new kakao.maps.services.Geocoder();
+} catch(e) {
+  console.warn('Geocoder init failed:', e);
+}
+</script>
+</body>
+</html>

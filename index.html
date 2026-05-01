@@ -6,6 +6,7 @@
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-title" content="배송주소">
+  <meta http-equiv="Cache-Control" content="no-store">
   <title>배송주소빨리찾기</title>
   <script src="//dapi.kakao.com/v2/maps/sdk.js?appkey=474834d88284e77adc467c775997a2fe&libraries=services"></script>
   <script src="//t1.daumcdn.net/mapjsapi/bundle/postcode/prod/postcode.v2.js"></script>
@@ -781,7 +782,11 @@ function openTmapSelected() {
 }
 
 // ════════════ Nominatim 지오코딩 ════════════
-async function geocodeAddr(addr) {
+async function geocodeAddr(rawAddr) {
+  // 슬래시 포함 시 앞부분만 사용 (도로명 주소)
+  const addr = (rawAddr || '').split('/')[0].trim();
+  if (!addr) return null;
+
   // 1순위: Kakao 지오코더
   if (geocoder) {
     const res = await new Promise(resolve => {
@@ -793,15 +798,25 @@ async function geocodeAddr(addr) {
     });
     if (res) return { lat: parseFloat(res[0].y), lng: parseFloat(res[0].x) };
   }
-  // 2순위: Nominatim (OpenStreetMap)
-  try {
-    const r = await fetch(
-      `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(addr)}&format=json&limit=1&countrycodes=kr`,
-      { headers: { 'Accept-Language': 'ko' } }
-    );
-    const d = await r.json();
-    if (d.length) return { lat: parseFloat(d[0].lat), lng: parseFloat(d[0].lon) };
-  } catch(e) {}
+
+  // 2순위: Nominatim — 쿼리 3가지 시도
+  const queries = [
+    addr,
+    addr.replace(/\s*\d+[-\d]*\s*$/, '').trim(),   // 번지 제거
+    '대한민국 ' + addr,
+  ];
+  for (const q of queries) {
+    if (!q) continue;
+    try {
+      const r = await fetch(
+        `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(q)}&format=json&limit=1&countrycodes=kr&accept-language=ko`,
+        { headers: { 'User-Agent': 'delivery-app/2.0' } }
+      );
+      const d = await r.json();
+      if (d.length) return { lat: parseFloat(d[0].lat), lng: parseFloat(d[0].lon) };
+    } catch(e) {}
+    await new Promise(r => setTimeout(r, 500));
+  }
   return null;
 }
 

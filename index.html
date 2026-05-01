@@ -148,6 +148,30 @@
     .toast.show { opacity: 1; }
 
     input[type="checkbox"], input[type="radio"] { width: 16px; height: 16px; cursor: pointer; flex-shrink: 0; }
+
+    /* ── 자동완성 ── */
+    .ac-wrap { position: relative; }
+    .ac-list {
+      display: none; position: absolute; left: 0; right: 0; top: 100%; z-index: 100;
+      background: white; border: 1px solid #3F51B5; border-top: none;
+      border-radius: 0 0 6px 6px; max-height: 220px; overflow-y: auto;
+      box-shadow: 0 4px 12px rgba(0,0,0,0.18);
+    }
+    .ac-item {
+      padding: 9px 10px; font-size: 14px; cursor: pointer; border-bottom: 1px solid #f0f0f0;
+      display: flex; flex-direction: column; gap: 2px;
+    }
+    .ac-item:last-child { border-bottom: none; }
+    .ac-item:active { background: #e8eaf6; }
+    .ac-name { font-weight: bold; color: #1A237E; }
+    .ac-addr { font-size: 12px; color: #888; }
+
+    /* ── 목록 지도버튼 ── */
+    .map-preview-btn {
+      flex-shrink: 0; background: #43A047; color: white; border: none;
+      border-radius: 4px; padding: 6px 8px; font-size: 11px; font-weight: bold; cursor: pointer;
+    }
+    .map-preview-btn:active { background: #2E7D32; }
   </style>
 </head>
 <body>
@@ -161,8 +185,12 @@
 
   <div class="addr-row">
     <span class="addr-label">주소 前</span>
-    <input id="addr-before" class="addr-input" type="text" placeholder="앞주소 (예: 곽남길29)"
-           onfocus="setFocus('before')" autocomplete="off" autocorrect="off" spellcheck="false">
+    <div class="ac-wrap" style="flex:1;min-width:0;">
+      <input id="addr-before" class="addr-input" type="text" placeholder="앞주소 (예: 곽남길29)"
+             onfocus="setFocus('before')" oninput="onAddrInput(event)"
+             autocomplete="off" autocorrect="off" spellcheck="false" style="width:100%;">
+      <div class="ac-list" id="ac-list"></div>
+    </div>
     <button class="btn" onclick="searchAddress()">찾 기</button>
     <button class="btn" onclick="showMap('delivery')">지 도</button>
   </div>
@@ -388,12 +416,60 @@ function updateRoadKeys() {
 }
 buildRegionRadios();
 
+// ════════════ 주소 자동완성 ════════════
+let ps = null;
+try { ps = new kakao.maps.services.Places(); } catch(e) {}
+let acTimer = null, acResults = [], pendingCoords = null;
+
+function onAddrInput(e) {
+  pendingCoords = null;
+  clearTimeout(acTimer);
+  const val = e.target.value.trim();
+  if (val.length < 2) { hideAC(); return; }
+  acTimer = setTimeout(() => {
+    if (!ps) return;
+    ps.keywordSearch(val, (results, status) => {
+      if (status === kakao.maps.services.Status.OK) showAC(results.slice(0, 6));
+      else hideAC();
+    });
+  }, 280);
+}
+function showAC(results) {
+  acResults = results;
+  const el = document.getElementById('ac-list');
+  el.innerHTML = results.map((r, i) =>
+    `<div class="ac-item" ontouchstart="" onclick="selectAC(${i})">
+      <span class="ac-name">${r.place_name}</span>
+      <span class="ac-addr">${r.road_address_name || r.address_name}</span>
+    </div>`
+  ).join('');
+  el.style.display = 'block';
+}
+function hideAC() {
+  document.getElementById('ac-list').style.display = 'none';
+  acResults = [];
+}
+function selectAC(idx) {
+  const r = acResults[idx];
+  if (!r) return;
+  const addr = r.road_address_name || r.address_name;
+  document.getElementById('addr-before').value = addr;
+  pendingCoords = { lat: parseFloat(r.y), lng: parseFloat(r.x) };
+  hideAC();
+  setFocus('after');
+  document.getElementById('addr-after').focus();
+}
+document.addEventListener('click', e => {
+  if (!e.target.closest('.ac-wrap')) hideAC();
+});
+
 // ════════════ 주소 검색 (Daum 우편번호) ════════════
 function searchAddress() {
   new daum.Postcode({
     oncomplete(data) {
       const road = data.roadAddress || data.jibunAddress;
       document.getElementById('addr-before').value = road;
+      pendingCoords = null;
       setFocus('after');
       document.getElementById('addr-after').focus();
     }
@@ -428,9 +504,14 @@ function registerDelivery() {
     setFocus('before');
   };
 
-  // 카카오 지오코딩으로 좌표 취득
-  const searchAddr = aft ? `${bef} ${aft}` : bef;
-  if (geocoder) {
+  // 좌표: 자동완성 선택 시 pendingCoords 우선, 없으면 지오코딩
+  if (pendingCoords) {
+    item.lat = pendingCoords.lat;
+    item.lng = pendingCoords.lng;
+    pendingCoords = null;
+    doSave();
+  } else if (geocoder) {
+    const searchAddr = aft ? `${bef} ${aft}` : bef;
     geocoder.addressSearch(searchAddr, (res, status) => {
       if (status === kakao.maps.services.Status.OK) {
         item.lat = parseFloat(res[0].y);
@@ -465,6 +546,7 @@ function renderList() {
       <input type="checkbox" ${item.selected?'checked':''} onclick="event.stopPropagation();toggleItem('${item.id}')">
       <span class="addr-text">${item.full} (${item.order})</span>
       ${item.urgent ? '<span class="urgent-badge">긴급</span>' : ''}
+      <button class="map-preview-btn" onclick="event.stopPropagation();showMapItem('${item.id}')">지도</button>
       <button class="tmap-btn" onclick="event.stopPropagation();openTmap('${item.id}')">T맵</button>
     </div>`).join('');
 
@@ -626,6 +708,43 @@ function saveSettings() {
   buildRegionRadios();
   toast('설정 저장 완료');
   goBack();
+}
+
+// ════════════ 지도 미리보기 (단일 항목) ════════════
+function showMapItem(id) {
+  const item = items.find(x => x.id === id);
+  if (!item) return;
+  if (item.lat && item.lng) { _renderSingleMap(item); return; }
+  if (!geocoder) { toast('좌표가 없습니다'); return; }
+  toast('위치 확인 중...');
+  geocoder.addressSearch(item.full, (res, status) => {
+    if (status === kakao.maps.services.Status.OK) {
+      item.lat = parseFloat(res[0].y);
+      item.lng = parseFloat(res[0].x);
+      saveItems(items);
+      _renderSingleMap(item);
+    } else {
+      toast('지도에서 주소를 찾을 수 없습니다');
+    }
+  });
+}
+function _renderSingleMap(item) {
+  prevScreen = 'list';
+  document.getElementById('map-title').textContent = item.full;
+  document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
+  document.getElementById('screen-map').classList.add('active');
+  setTimeout(() => {
+    const latlng = new kakao.maps.LatLng(item.lat, item.lng);
+    const container = document.getElementById('kakao-map');
+    if (!kakaoMapObj) kakaoMapObj = new kakao.maps.Map(container, { center: latlng, level: 3 });
+    else { kakaoMapObj.relayout(); kakaoMapObj.setCenter(latlng); kakaoMapObj.setLevel(3); }
+    clearMarkers();
+    const m = new kakao.maps.Marker({ map: kakaoMapObj, position: latlng });
+    mapMarkers.push(m);
+    new kakao.maps.InfoWindow({
+      content: `<div style="padding:7px 10px;font-size:13px;max-width:220px;line-height:1.4;"><b>${item.order}번.</b> ${item.full}${item.urgent?' 🔴':''}</div>`
+    }).open(kakaoMapObj, m);
+  }, 80);
 }
 
 // ════════════ 초기화 ════════════

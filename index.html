@@ -132,8 +132,8 @@
     .tmap-btn:active { background: #1558c0; }
 
     /* ── 지도 ── */
-    #kakao-map { width: 100%; height: 100%; }
-    #screen-map .map-wrap { flex: 1; min-height: 0; }
+    #screen-map .map-wrap { flex: 1; min-height: 0; position: relative; overflow: hidden; }
+    #kakao-map { position: absolute; top: 0; left: 0; right: 0; bottom: 0; }
 
     /* ── 설정 화면 ── */
     .settings-body { flex: 1; overflow-y: auto; padding: 12px; display: flex; flex-direction: column; gap: 10px; }
@@ -786,51 +786,57 @@ function openTmapSelected() {
 
 // ════════════ 지도 ════════════
 let kakaoMapObj = null, mapMarkers = [];
-function showMap(mode) {
+
+function openMapScreen(title, renderFn) {
   prevScreen = document.querySelector('.screen.active')?.id.replace('screen-','') || 'main';
-  document.getElementById('map-title').textContent = mode === 'current' ? '내 위치' : '배송지 지도';
+  document.getElementById('map-title').textContent = title;
   document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
   document.getElementById('screen-map').classList.add('active');
-  setTimeout(() => initMap(mode), 80);
+  // 매번 새로 생성해야 컨테이너 크기를 정확히 반영
+  kakaoMapObj = null;
+  mapMarkers = [];
+  setTimeout(renderFn, 150);
 }
-function clearMarkers() { mapMarkers.forEach(m => m.setMap(null)); mapMarkers = []; }
-function initMap(mode) {
+
+function makeMap(center, level) {
   const container = document.getElementById('kakao-map');
-  if (mode === 'current') {
-    navigator.geolocation.getCurrentPosition(pos => {
-      const latlng = new kakao.maps.LatLng(pos.coords.latitude, pos.coords.longitude);
-      if (!kakaoMapObj) kakaoMapObj = new kakao.maps.Map(container, { center: latlng, level: cfg.mapLevel });
-      else { kakaoMapObj.relayout(); kakaoMapObj.setCenter(latlng); }
-      clearMarkers();
-      const m = new kakao.maps.Marker({ map: kakaoMapObj, position: latlng });
-      mapMarkers.push(m);
-      new kakao.maps.InfoWindow({ content: '<div style="padding:6px">📍 현재 위치</div>' }).open(kakaoMapObj, m);
-    }, () => { toast('위치 권한을 허용해주세요'); fallbackMap(container); });
-  } else {
-    const today = todayStr();
-    const geo = items.filter(x => x.date === today && x.lat && x.lng);
-    const center = geo.length ? new kakao.maps.LatLng(geo[0].lat, geo[0].lng) : new kakao.maps.LatLng(35.1595, 128.9861);
-    if (!kakaoMapObj) kakaoMapObj = new kakao.maps.Map(container, { center, level: cfg.mapLevel });
-    else kakaoMapObj.relayout();
-    clearMarkers();
-    if (!geo.length) { toast('등록된 배송지 좌표가 없습니다'); kakaoMapObj.setCenter(center); return; }
-    const bounds = new kakao.maps.LatLngBounds();
-    geo.forEach(item => {
-      const pos = new kakao.maps.LatLng(item.lat, item.lng);
-      bounds.extend(pos);
-      const m = new kakao.maps.Marker({ map: kakaoMapObj, position: pos });
-      mapMarkers.push(m);
-      const iw = new kakao.maps.InfoWindow({
-        content: `<div style="padding:6px;font-size:12px;max-width:200px;"><b>${item.order}.</b> ${item.full}${item.urgent?' 🔴':''}</div>`
-      });
-      kakao.maps.event.addListener(m, 'click', () => iw.open(kakaoMapObj, m));
-    });
-    kakaoMapObj.setBounds(bounds);
-  }
+  kakaoMapObj = new kakao.maps.Map(container, { center, level });
+  return kakaoMapObj;
 }
-function fallbackMap(container) {
-  if (!kakaoMapObj) kakaoMapObj = new kakao.maps.Map(container, { center: new kakao.maps.LatLng(35.1595, 128.9861), level: 8 });
-  else kakaoMapObj.relayout();
+
+function showMap(mode) {
+  openMapScreen(mode === 'current' ? '내 위치' : '배송지 지도', () => {
+    if (mode === 'current') {
+      navigator.geolocation.getCurrentPosition(pos => {
+        const latlng = new kakao.maps.LatLng(pos.coords.latitude, pos.coords.longitude);
+        const map = makeMap(latlng, cfg.mapLevel);
+        const m = new kakao.maps.Marker({ map, position: latlng });
+        mapMarkers.push(m);
+        new kakao.maps.InfoWindow({ content: '<div style="padding:6px">📍 현재 위치</div>' }).open(map, m);
+      }, () => {
+        toast('위치 권한을 허용해주세요');
+        makeMap(new kakao.maps.LatLng(35.1595, 128.9861), 8);
+      });
+    } else {
+      const today = todayStr();
+      const geo = items.filter(x => x.date === today && x.lat && x.lng);
+      const defaultCenter = new kakao.maps.LatLng(35.1595, 128.9861);
+      const map = makeMap(geo.length ? new kakao.maps.LatLng(geo[0].lat, geo[0].lng) : defaultCenter, cfg.mapLevel);
+      if (!geo.length) { toast('등록된 배송지 좌표가 없습니다'); return; }
+      const bounds = new kakao.maps.LatLngBounds();
+      geo.forEach(item => {
+        const pos = new kakao.maps.LatLng(item.lat, item.lng);
+        bounds.extend(pos);
+        const m = new kakao.maps.Marker({ map, position: pos });
+        mapMarkers.push(m);
+        const iw = new kakao.maps.InfoWindow({
+          content: `<div style="padding:6px;font-size:12px;max-width:200px;"><b>${item.order}.</b> ${item.full}${item.urgent?' 🔴':''}</div>`
+        });
+        kakao.maps.event.addListener(m, 'click', () => iw.open(map, m));
+      });
+      map.setBounds(bounds);
+    }
+  });
 }
 
 // ════════════ 설정 화면 ════════════
@@ -877,36 +883,29 @@ function showMapItem(id) {
   });
 }
 function _renderSingleMap(item) {
-  prevScreen = 'list';
-  document.getElementById('map-title').textContent = `${item.order}:${item.full}`;
-  document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
-  document.getElementById('screen-map').classList.add('active');
-  setTimeout(() => {
+  openMapScreen(`${item.order}:${item.full}`, () => {
     const latlng = new kakao.maps.LatLng(item.lat, item.lng);
-    const container = document.getElementById('kakao-map');
-    if (!kakaoMapObj) kakaoMapObj = new kakao.maps.Map(container, { center: latlng, level: 3 });
-    else { kakaoMapObj.relayout(); kakaoMapObj.setCenter(latlng); kakaoMapObj.setLevel(3); }
-    clearMarkers();
+    const map = makeMap(latlng, 3);
 
-    // 오늘 전체 배송지도 작은 마커로 표시
+    // 오늘 다른 배송지도 표시
     const today = todayStr();
     items.filter(x => x.date === today && x.lat && x.lng && x.id !== item.id).forEach(x => {
       const pos = new kakao.maps.LatLng(x.lat, x.lng);
-      const m = new kakao.maps.Marker({ map: kakaoMapObj, position: pos });
+      const m = new kakao.maps.Marker({ map, position: pos });
       mapMarkers.push(m);
       const iw = new kakao.maps.InfoWindow({
         content: `<div style="padding:4px 8px;font-size:12px;">${x.order}:${x.full}</div>`
       });
-      kakao.maps.event.addListener(m, 'click', () => iw.open(kakaoMapObj, m));
+      kakao.maps.event.addListener(m, 'click', () => iw.open(map, m));
     });
 
-    // 선택된 항목 강조 마커
-    const m = new kakao.maps.Marker({ map: kakaoMapObj, position: latlng });
+    // 선택 항목 강조 마커 + 정보창 자동 오픈
+    const m = new kakao.maps.Marker({ map, position: latlng });
     mapMarkers.push(m);
     new kakao.maps.InfoWindow({
       content: `<div style="padding:7px 10px;font-size:13px;max-width:220px;line-height:1.4;font-weight:bold;">${item.order}:${item.full}${item.urgent?' 🔴':''}</div>`
-    }).open(kakaoMapObj, m);
-  }, 80);
+    }).open(map, m);
+  });
 }
 
 // ════════════ 초기화 ════════════

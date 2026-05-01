@@ -837,20 +837,30 @@ function openMapScreen(title, renderFn) {
 }
 
 function makeLeafMap(lat, lng, zoom) {
+  if (typeof L === 'undefined') { toast('지도 라이브러리 로딩 중... 잠시 후 다시 시도'); return null; }
   const container = document.getElementById('kakao-map');
-  const wrap = container.parentElement;
-  // Leaflet needs explicit px height — calculate from available space
-  const h = wrap.clientHeight || (window.innerHeight - 52);
-  container.style.height = h + 'px';
-  container.style.width = '100%';
 
+  // 기존 Leaflet 인스턴스 완전 제거 후 컨테이너 초기화
   if (leafMap) { try { leafMap.remove(); } catch(e) {} leafMap = null; }
-  leafMap = L.map(container, { zoomControl: true }).setView([lat, lng], zoom);
-  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-    maxZoom: 19, attribution: '© OpenStreetMap'
-  }).addTo(leafMap);
-  setTimeout(() => { try { leafMap.invalidateSize(); } catch(e) {} }, 200);
-  return leafMap;
+  container.innerHTML = '';
+  container.className = '';
+
+  // 헤더 높이 빼고 명시적 px 높이 설정
+  const headerH = document.querySelector('#screen-map .header').offsetHeight || 52;
+  const h = window.innerHeight - headerH;
+  container.style.cssText = `display:block;width:100%;height:${h}px;`;
+
+  try {
+    leafMap = L.map(container).setView([lat, lng], zoom);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      maxZoom: 19, attribution: '© OpenStreetMap'
+    }).addTo(leafMap);
+    setTimeout(() => { if (leafMap) leafMap.invalidateSize(); }, 300);
+    return leafMap;
+  } catch(e) {
+    toast('지도 오류: ' + (e.message || '').slice(0, 40));
+    return null;
+  }
 }
 
 function showMap(mode) {

@@ -81,8 +81,11 @@
     }
     .region-display:active { background: #c5d5f5; }
 
-    /* ── 주소 검색 결과 ── */
-    .addr-results { display: none; background: white; border-top: 2px solid #3F51B5; }
+    /* ── 주소 검색 결과 (keypad 위, 오버레이) ── */
+    .addr-results {
+      display: none; background: white; border-bottom: 2px solid #3F51B5;
+      position: relative; z-index: 10;
+    }
     .addr-result-item {
       padding: 11px 14px; font-size: 14px; cursor: pointer;
       border-bottom: 1px solid #eee; display: flex; align-items: center; gap: 8px;
@@ -238,6 +241,8 @@
   <input type="file" id="camera-input" accept="image/*" capture="environment"
          style="display:none" onchange="handleCameraCapture(this)">
 
+  <div class="addr-results" id="addr-results"></div>
+
   <div class="keypad">
     <div class="key" onclick="kp('1')">1</div>
     <div class="key" onclick="kp('2')">2</div>
@@ -272,7 +277,6 @@
     <div id="region-radios" style="display:flex;gap:10px;"></div>
   </div>
   <div class="region-display" id="region-display" onclick="kpRegion()">전국모드</div>
-  <div class="addr-results" id="addr-results"></div>
 </div>
 
 <div class="ocr-overlay" id="ocr-overlay">
@@ -510,8 +514,21 @@ document.addEventListener('click', e => {
 function searchAddress() {
   new daum.Postcode({
     oncomplete(data) {
+      const road = data.roadAddress || data.jibunAddress;
+      // 신주소를 addr-before에 바로 채움 → 배송등록 바로 가능
+      document.getElementById('addr-before').value = road;
       pendingCoords = null;
-      showAddrResults(data.roadAddress, data.jibunAddress, data.buildingName);
+      setFocus('after');
+      document.getElementById('addr-after').focus();
+      // 구주소가 별도로 있으면 대안 탭으로 표시
+      if (data.roadAddress && data.jibunAddress && data.roadAddress !== data.jibunAddress) {
+        showAddrResults(null, data.jibunAddress, data.buildingName);
+      } else if (data.buildingName) {
+        showBuildingBubble(data.buildingName);
+        document.getElementById('addr-results').style.display = 'none';
+      } else {
+        document.getElementById('addr-results').style.display = 'none';
+      }
     }
   }).open();
 }

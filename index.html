@@ -11,6 +11,8 @@
   <script src="//dapi.kakao.com/v2/maps/sdk.js?appkey=474834d88284e77adc467c775997a2fe&libraries=services&autoload=false"></script>
   <script src="//t1.daumcdn.net/mapjsapi/bundle/postcode/prod/postcode.v2.js"></script>
   <script src="https://unpkg.com/tesseract.js@5/dist/tesseract.min.js"></script>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
     html, body { height: 100%; overflow: hidden; font-family: 'Malgun Gothic', 'Apple SD Gothic Neo', sans-serif; }
@@ -792,96 +794,97 @@ function geocodeAddr(rawAddr) {
   });
 }
 
-// ════════════ Leaflet 지도 (카카오 지오코딩) ════════════
-let kakaoMapInst = null;
-let kakaoReady = false;
-kakao.maps.load(() => { kakaoReady = true; try { geocoder = new kakao.maps.services.Geocoder(); } catch(e) {} });
+// ════════════ 지도 ════════════
+kakao.maps.load(() => { try { geocoder = new kakao.maps.services.Geocoder(); } catch(e) {} });
 
 function escHtml(s) {
   return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
 }
-function markerContent(item, highlight) {
-  const bg  = highlight ? '#0D47A1' : (item.urgent ? '#B71C1C' : '#1A237E');
-  const lbl = escHtml(item.full.split('/')[0].slice(-8));
-  return `<div style="background:${bg};color:white;padding:2px 6px 4px;border-radius:3px;
-              font-family:sans-serif;text-align:center;min-width:34px;max-width:90px;
-              box-shadow:0 2px 5px rgba(0,0,0,.5);">
-            <div style="font-size:10px;line-height:1.3;">${lbl}</div>
-            <div style="font-size:18px;font-weight:bold;line-height:1.1;">${item.order}</div>
-          </div>`;
-}
-function addKakaoOverlay(map, item, highlight) {
-  const ov = new kakao.maps.CustomOverlay({
-    position: new kakao.maps.LatLng(item.lat, item.lng),
-    content: markerContent(item, highlight),
-    yAnchor: 1.3
-  });
-  ov.setMap(map);
-  return ov;
+
+// 단일 배송지 → 카카오맵 앱으로 열기
+async function showMapItem(id) {
+  const item = items.find(x => x.id === id);
+  if (!item) return;
+  if (!item.lat || !item.lng) {
+    toast('위치 확인 중...');
+    const coord = await geocodeAddr(item.full);
+    if (!coord) { toast('주소를 찾을 수 없습니다'); return; }
+    item.lat = coord.lat; item.lng = coord.lng;
+    saveItems(items);
+  }
+  const name = encodeURIComponent(`${item.order}번 ${item.full.split('/')[0]}`);
+  window.open(`https://map.kakao.com/link/map/${name},${item.lat},${item.lng}`, '_blank');
 }
 
+// 전체 배송지 개요 → Leaflet (내부 지도)
+let leafMap = null;
+function makeMarkerIcon(item) {
+  const bg = item.urgent ? '#B71C1C' : '#1A237E';
+  const lbl = escHtml(item.full.split('/')[0].slice(-8));
+  return L.divIcon({
+    className: '',
+    html: `<div style="background:${bg};color:white;padding:2px 6px 4px;border-radius:3px;
+               font-family:sans-serif;text-align:center;min-width:34px;max-width:90px;
+               box-shadow:0 2px 5px rgba(0,0,0,.5);">
+             <div style="font-size:10px;line-height:1.3;">${lbl}</div>
+             <div style="font-size:18px;font-weight:bold;line-height:1.1;">${item.order}</div>
+           </div>`,
+    iconAnchor: [17, 40]
+  });
+}
 function openMapScreen(title, renderFn) {
   prevScreen = document.querySelector('.screen.active')?.id.replace('screen-','') || 'main';
   document.getElementById('map-title').textContent = title;
   document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
   document.getElementById('screen-map').classList.add('active');
-  kakaoMapInst = null;
+  if (leafMap) { try { leafMap.remove(); } catch(e) {} leafMap = null; }
   setTimeout(async () => {
     try { await renderFn(); }
-    catch(e) { toast('지도오류: ' + (e.message || '').slice(0, 40)); }
-  }, 250);
+    catch(e) { toast('지도오류: ' + (e.message||'').slice(0,40)); }
+  }, 200);
 }
-
-function makeKakaoMap(lat, lng, level) {
+function makeLeafMap(lat, lng, zoom) {
   const container = document.getElementById('kakao-map');
   const headerH = document.querySelector('#screen-map .header').offsetHeight || 52;
-  container.innerHTML = '';
+  container.innerHTML = ''; container.className = '';
   container.style.cssText = `display:block;width:100%;height:${window.innerHeight - headerH}px;`;
-  const map = new kakao.maps.Map(container, {
-    center: new kakao.maps.LatLng(lat, lng),
-    level: level
-  });
-  setTimeout(() => map.relayout(), 100);
-  kakaoMapInst = map;
-  return map;
+  leafMap = L.map(container).setView([lat, lng], zoom);
+  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    maxZoom: 19, attribution: '© OpenStreetMap'
+  }).addTo(leafMap);
+  setTimeout(() => leafMap && leafMap.invalidateSize(), 300);
+  return leafMap;
 }
-
 function showMap(mode) {
   openMapScreen(mode === 'current' ? '내 위치' : '배송지 지도', async () => {
     if (mode === 'current') {
       navigator.geolocation.getCurrentPosition(pos => {
-        const map = makeKakaoMap(pos.coords.latitude, pos.coords.longitude, 3);
-        new kakao.maps.CustomOverlay({
-          position: new kakao.maps.LatLng(pos.coords.latitude, pos.coords.longitude),
-          content: '<div style="background:#e53935;color:white;padding:4px 8px;border-radius:12px;font-size:13px;box-shadow:0 2px 5px rgba(0,0,0,.4);">📍 현재위치</div>',
-          yAnchor: 1.3
-        }).setMap(map);
-      }, () => { toast('위치 권한을 허용해주세요'); makeKakaoMap(35.5371, 129.3115, 5); });
+        const map = makeLeafMap(pos.coords.latitude, pos.coords.longitude, 15);
+        L.marker([pos.coords.latitude, pos.coords.longitude]).addTo(map).bindPopup('📍 현재위치').openPopup();
+      }, () => { toast('위치 권한을 허용해주세요'); makeLeafMap(35.5371, 129.3115, 13); });
     } else {
       const today = todayStr();
       const todayItems = items.filter(x => x.date === today);
-      if (!todayItems.length) { makeKakaoMap(35.5371, 129.3115, 5); toast('오늘 등록된 배송지가 없습니다'); return; }
-
+      if (!todayItems.length) { makeLeafMap(35.5371, 129.3115, 13); toast('오늘 등록된 배송지가 없습니다'); return; }
       const needGeo = todayItems.filter(x => !x.lat || !x.lng);
       if (needGeo.length) {
         toast(`위치 확인 중 (${needGeo.length}건)...`);
-        await Promise.all(needGeo.map(async item => {
-          const c = await geocodeAddr(item.full);
-          if (c) { item.lat = c.lat; item.lng = c.lng; }
+        await Promise.all(needGeo.map(async it => {
+          const c = await geocodeAddr(it.full);
+          if (c) { it.lat = c.lat; it.lng = c.lng; }
         }));
         saveItems(items);
       }
-
       const geo = todayItems.filter(x => x.lat && x.lng);
-      if (!geo.length) { makeKakaoMap(35.5371, 129.3115, 5); toast('주소 좌표를 찾을 수 없습니다'); return; }
-
-      const map = makeKakaoMap(geo[0].lat, geo[0].lng, 5);
-      const bounds = new kakao.maps.LatLngBounds();
-      geo.forEach(item => {
-        bounds.extend(new kakao.maps.LatLng(item.lat, item.lng));
-        addKakaoOverlay(map, item, false);
+      if (!geo.length) { makeLeafMap(35.5371, 129.3115, 13); toast('주소 좌표를 찾을 수 없습니다'); return; }
+      const map = makeLeafMap(geo[0].lat, geo[0].lng, 13);
+      const bounds = [];
+      geo.forEach(it => {
+        bounds.push([it.lat, it.lng]);
+        L.marker([it.lat, it.lng], { icon: makeMarkerIcon(it) }).addTo(map)
+          .bindPopup(`<b>${it.order}:</b> ${escHtml(it.full.split('/')[0])}`);
       });
-      setTimeout(() => map.setBounds(bounds), 150);
+      map.fitBounds(bounds, { padding: [30, 30] });
     }
   });
 }
@@ -911,28 +914,6 @@ function saveSettings() {
   goBack();
 }
 
-// ════════════ 지도 미리보기 (단일 항목) ════════════
-async function showMapItem(id) {
-  const item = items.find(x => x.id === id);
-  if (!item) return;
-  if (!item.lat || !item.lng) {
-    toast('위치 확인 중...');
-    const coord = await geocodeAddr(item.full);
-    if (!coord) { toast('주소를 지도에서 찾을 수 없습니다'); return; }
-    item.lat = coord.lat; item.lng = coord.lng;
-    saveItems(items);
-  }
-  _renderSingleMap(item);
-}
-function _renderSingleMap(item) {
-  openMapScreen(`${item.order}:${item.full}`, () => {
-    const map = makeKakaoMap(item.lat, item.lng, 3);
-    const today = todayStr();
-    items.filter(x => x.date === today && x.lat && x.lng && x.id !== item.id)
-      .forEach(x => addKakaoOverlay(map, x, false));
-    addKakaoOverlay(map, item, true);
-  });
-}
 
 // ════════════ 초기화 ════════════
 let geocoder = null;

@@ -805,19 +805,28 @@ function openMapScreen(title, renderFn) {
   document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
   document.getElementById('screen-map').classList.add('active');
   kakaoMap = null; kakaoMarkers = [];
-  setTimeout(renderFn, 150);
+  setTimeout(async () => {
+    try { await renderFn(); }
+    catch(e) { toast('지도오류: ' + (e.message || String(e)).slice(0, 50)); }
+  }, 200);
 }
 
 function makeKakaoMap(lat, lng, level) {
+  if (typeof kakao === 'undefined' || !kakao.maps) {
+    toast('카카오맵 SDK 로딩 실패 — 새로고침 후 재시도'); return null;
+  }
   const container = document.getElementById('kakao-map');
   const headerH = document.querySelector('#screen-map .header').offsetHeight || 52;
-  container.style.width = '100%';
-  container.style.height = (window.innerHeight - headerH) + 'px';
-  container.style.position = 'relative';
-  kakaoMap = new kakao.maps.Map(container, {
-    center: new kakao.maps.LatLng(lat, lng), level
-  });
-  return kakaoMap;
+  container.style.cssText = `width:100%;height:${window.innerHeight - headerH}px;position:relative;`;
+  try {
+    kakaoMap = new kakao.maps.Map(container, {
+      center: new kakao.maps.LatLng(lat, lng), level
+    });
+    return kakaoMap;
+  } catch(e) {
+    toast('카카오맵 생성 실패: ' + (e.message || '').slice(0, 40));
+    return null;
+  }
 }
 
 function addKakaoMarker(map, item, open) {

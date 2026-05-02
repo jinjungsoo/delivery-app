@@ -11,8 +11,6 @@
   <script src="//dapi.kakao.com/v2/maps/sdk.js?appkey=474834d88284e77adc467c775997a2fe&libraries=services"></script>
   <script src="//t1.daumcdn.net/mapjsapi/bundle/postcode/prod/postcode.v2.js"></script>
   <script src="https://unpkg.com/tesseract.js@5/dist/tesseract.min.js"></script>
-  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
-  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
     html, body { height: 100%; overflow: hidden; font-family: 'Malgun Gothic', 'Apple SD Gothic Neo', sans-serif; }
@@ -135,8 +133,8 @@
     .tmap-btn:active { background: #1558c0; }
 
     /* ── 지도 ── */
-    #screen-map .map-wrap { flex: 1; min-height: 0; overflow: hidden; }
-    #kakao-map { display: block; width: 100%; }
+    #screen-map .map-wrap { flex: 1; min-height: 0; position: relative; overflow: hidden; }
+    #kakao-map { position: absolute; top: 0; left: 0; right: 0; bottom: 0; width: 100%; height: 100%; }
 
     /* ── 설정 화면 ── */
     .settings-body { flex: 1; overflow-y: auto; padding: 12px; display: flex; flex-direction: column; gap: 10px; }
@@ -781,65 +779,24 @@ function openTmapSelected() {
   const a = document.createElement('a'); a.href = url; a.click();
 }
 
-// ════════════ Nominatim 지오코딩 ════════════
-async function geocodeAddr(rawAddr) {
-  // 슬래시 포함 시 앞부분만 사용 (도로명 주소)
+// ════════════ 카카오 지오코딩 ════════════
+function geocodeAddr(rawAddr) {
   const addr = (rawAddr || '').split('/')[0].trim();
-  if (!addr) return null;
-
-  // 1순위: Kakao 지오코더
-  if (geocoder) {
-    const res = await new Promise(resolve => {
-      try {
-        geocoder.addressSearch(addr, (r, s) => {
-          resolve(s === kakao.maps.services.Status.OK ? r : null);
-        });
-      } catch(e) { resolve(null); }
+  if (!addr || !geocoder) return Promise.resolve(null);
+  return new Promise(resolve => {
+    geocoder.addressSearch(addr, (r, s) => {
+      resolve(s === kakao.maps.services.Status.OK
+        ? { lat: parseFloat(r[0].y), lng: parseFloat(r[0].x) }
+        : null);
     });
-    if (res) return { lat: parseFloat(res[0].y), lng: parseFloat(res[0].x) };
-  }
-
-  // 2순위: Nominatim — 쿼리 3가지 시도
-  const queries = [
-    addr,
-    addr.replace(/\s*\d+[-\d]*\s*$/, '').trim(),   // 번지 제거
-    '대한민국 ' + addr,
-  ];
-  for (const q of queries) {
-    if (!q) continue;
-    try {
-      const r = await fetch(
-        `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(q)}&format=json&limit=1&countrycodes=kr&accept-language=ko`,
-        { headers: { 'User-Agent': 'delivery-app/2.0' } }
-      );
-      const d = await r.json();
-      if (d.length) return { lat: parseFloat(d[0].lat), lng: parseFloat(d[0].lon) };
-    } catch(e) {}
-    await new Promise(r => setTimeout(r, 500));
-  }
-  return null;
+  });
 }
 
-// ════════════ Leaflet 지도 ════════════
-let leafMap = null;
+// ════════════ 카카오 지도 ════════════
+let kakaoMap = null, kakaoMarkers = [];
 
 function escHtml(s) {
   return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
-}
-function makeMarkerIcon(item, highlight) {
-  const label = item.full.split('/')[0].replace(/^.*?(?=[가-힣]+(?:로|길|동|아파트|빌|타운|맨션))/, '').slice(0, 8);
-  const bg    = highlight ? '#0D47A1' : (item.urgent ? '#FFD700' : '#1A237E');
-  const numC  = item.urgent && !highlight ? '#212121' : 'white';
-  return L.divIcon({
-    className: '',
-    html: `<div style="background:${bg};color:white;padding:2px 5px 3px;border-radius:2px;
-                font-family:sans-serif;min-width:32px;max-width:90px;
-                box-shadow:0 1px 4px rgba(0,0,0,.5);cursor:pointer;">
-             <div style="font-size:10px;line-height:1.3;word-break:keep-all;color:rgba(255,255,255,.85);">${escHtml(label)}</div>
-             <div style="font-size:17px;font-weight:bold;line-height:1;color:${numC};">${item.order}</div>
-           </div>`,
-    iconAnchor: [0, 0]
-  });
 }
 
 function openMapScreen(title, renderFn) {
@@ -847,34 +804,36 @@ function openMapScreen(title, renderFn) {
   document.getElementById('map-title').textContent = title;
   document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
   document.getElementById('screen-map').classList.add('active');
-  if (leafMap) { leafMap.remove(); leafMap = null; }
+  kakaoMap = null; kakaoMarkers = [];
   setTimeout(renderFn, 150);
 }
 
-function makeLeafMap(lat, lng, zoom) {
-  if (typeof L === 'undefined') { toast('지도 라이브러리 로딩 중... 잠시 후 다시 시도'); return null; }
+function makeKakaoMap(lat, lng, level) {
   const container = document.getElementById('kakao-map');
+  kakaoMap = new kakao.maps.Map(container, {
+    center: new kakao.maps.LatLng(lat, lng), level
+  });
+  return kakaoMap;
+}
 
-  // 기존 Leaflet 인스턴스 완전 제거 후 컨테이너 초기화
-  if (leafMap) { try { leafMap.remove(); } catch(e) {} leafMap = null; }
-  container.innerHTML = '';
-  container.className = '';
-
-  // 헤더 높이 빼고 명시적 px 높이 설정
-  const headerH = document.querySelector('#screen-map .header').offsetHeight || 52;
-  const h = window.innerHeight - headerH;
-  container.style.cssText = `display:block;width:100%;height:${h}px;`;
-
-  try {
-    leafMap = L.map(container).setView([lat, lng], zoom);
-    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-      maxZoom: 19, attribution: '© OpenStreetMap'
-    }).addTo(leafMap);
-    setTimeout(() => { if (leafMap) leafMap.invalidateSize(); }, 300);
-    return leafMap;
-  } catch(e) {
-    toast('지도 오류: ' + (e.message || '').slice(0, 40));
-    return null;
+function addKakaoMarker(map, item, open) {
+  const pos = new kakao.maps.LatLng(item.lat, item.lng);
+  const bg  = item.urgent ? '#B71C1C' : '#1A237E';
+  const ov  = new kakao.maps.CustomOverlay({
+    position: pos, yAnchor: 1,
+    content: `<div style="background:${bg};color:white;padding:2px 6px 4px;border-radius:3px;
+                           font-family:sans-serif;text-align:center;min-width:34px;
+                           box-shadow:0 2px 5px rgba(0,0,0,.45);cursor:pointer;">
+                <div style="font-size:10px;line-height:1.3;">${escHtml(item.full.split('/')[0].slice(-8))}</div>
+                <div style="font-size:18px;font-weight:bold;line-height:1.1;">${item.order}</div>
+              </div>`
+  });
+  ov.setMap(map);
+  kakaoMarkers.push(ov);
+  if (open) {
+    new kakao.maps.InfoWindow({
+      content: `<div style="padding:7px 10px;font-size:13px;max-width:220px;">${item.order}: ${escHtml(item.full)}${item.urgent?' 🔴':''}</div>`
+    }).open(map, new kakao.maps.Marker({ position: pos }));
   }
 }
 
@@ -882,43 +841,39 @@ function showMap(mode) {
   openMapScreen(mode === 'current' ? '내 위치' : '배송지 지도', async () => {
     if (mode === 'current') {
       navigator.geolocation.getCurrentPosition(pos => {
-        const map = makeLeafMap(pos.coords.latitude, pos.coords.longitude, 15);
-        if (map) L.marker([pos.coords.latitude, pos.coords.longitude])
-          .addTo(map).bindPopup('📍 현재 위치').openPopup();
+        const map = makeKakaoMap(pos.coords.latitude, pos.coords.longitude, 3);
+        const latlng = new kakao.maps.LatLng(pos.coords.latitude, pos.coords.longitude);
+        new kakao.maps.Marker({ map, position: latlng });
+        new kakao.maps.InfoWindow({ content: '<div style="padding:6px">📍 현재 위치</div>' })
+          .open(map, new kakao.maps.Marker({ position: latlng }));
       }, () => {
         toast('위치 권한을 허용해주세요');
-        makeLeafMap(35.5371, 129.3115, 13);
+        makeKakaoMap(35.5371, 129.3115, 8);
       });
     } else {
       const today = todayStr();
       const todayItems = items.filter(x => x.date === today);
-      if (!todayItems.length) { makeLeafMap(35.5371, 129.3115, 13); toast('오늘 등록된 배송지가 없습니다'); return; }
+      if (!todayItems.length) { makeKakaoMap(35.5371, 129.3115, 8); toast('오늘 등록된 배송지가 없습니다'); return; }
 
-      // 울산 기준으로 지도 먼저 표시
-      const map = makeLeafMap(35.5371, 129.3115, 13);
-      if (!map) return;
+      const map = makeKakaoMap(35.5371, 129.3115, 8);
 
-      // 좌표 없는 항목 자동 지오코딩
       const needGeo = todayItems.filter(x => !x.lat || !x.lng);
       if (needGeo.length) toast(`위치 확인 중 (${needGeo.length}건)...`);
-      for (const item of needGeo) {
+      await Promise.all(needGeo.map(async item => {
         const coord = await geocodeAddr(item.full);
         if (coord) { item.lat = coord.lat; item.lng = coord.lng; }
-        if (needGeo.length > 1) await new Promise(r => setTimeout(r, 1100));
-      }
+      }));
       if (needGeo.length) saveItems(items);
 
       const geo = todayItems.filter(x => x.lat && x.lng);
       if (!geo.length) { toast('주소 좌표를 찾을 수 없습니다'); return; }
 
-      const bounds = [];
+      const bounds = new kakao.maps.LatLngBounds();
       geo.forEach(item => {
-        bounds.push([item.lat, item.lng]);
-        L.marker([item.lat, item.lng], { icon: makeMarkerIcon(item, false) })
-          .addTo(map)
-          .bindPopup(`<b>${item.order}:</b> ${escHtml(item.full)}${item.urgent?' 🔴':''}`);
+        bounds.extend(new kakao.maps.LatLng(item.lat, item.lng));
+        addKakaoMarker(map, item, false);
       });
-      map.fitBounds(bounds, { padding: [30, 30] });
+      map.setBounds(bounds);
     }
   });
 }
@@ -963,21 +918,11 @@ async function showMapItem(id) {
 }
 function _renderSingleMap(item) {
   openMapScreen(`${item.order}:${item.full}`, () => {
-    const map = makeLeafMap(item.lat, item.lng, 16);
+    const map = makeKakaoMap(item.lat, item.lng, 4);
     const today = todayStr();
-
-    // 오늘 다른 배송지 마커
-    items.filter(x => x.date === today && x.lat && x.lng && x.id !== item.id).forEach(x => {
-      L.marker([x.lat, x.lng], { icon: makeMarkerIcon(x, false) })
-        .addTo(map)
-        .bindPopup(`<b>${x.order}:</b> ${escHtml(x.full)}`);
-    });
-
-    // 선택 항목 강조 마커 + 팝업 자동 오픈
-    L.marker([item.lat, item.lng], { icon: makeMarkerIcon(item, true) })
-      .addTo(map)
-      .bindPopup(`<b>${item.order}:</b> ${escHtml(item.full)}${item.urgent?' 🔴':''}`)
-      .openPopup();
+    items.filter(x => x.date === today && x.lat && x.lng && x.id !== item.id)
+      .forEach(x => addKakaoMarker(map, x, false));
+    addKakaoMarker(map, item, true);
   });
 }
 

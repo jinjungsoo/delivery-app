@@ -810,6 +810,10 @@ function openMapScreen(title, renderFn) {
 
 function makeKakaoMap(lat, lng, level) {
   const container = document.getElementById('kakao-map');
+  const headerH = document.querySelector('#screen-map .header').offsetHeight || 52;
+  container.style.width = '100%';
+  container.style.height = (window.innerHeight - headerH) + 'px';
+  container.style.position = 'relative';
   kakaoMap = new kakao.maps.Map(container, {
     center: new kakao.maps.LatLng(lat, lng), level
   });

@@ -8,11 +8,9 @@
   <meta name="apple-mobile-web-app-title" content="배송주소">
   <meta http-equiv="Cache-Control" content="no-store">
   <title>배송주소빨리찾기</title>
-  <script src="//dapi.kakao.com/v2/maps/sdk.js?appkey=474834d88284e77adc467c775997a2fe&libraries=services"></script>
+  <script src="//dapi.kakao.com/v2/maps/sdk.js?appkey=474834d88284e77adc467c775997a2fe&libraries=services&autoload=false"></script>
   <script src="//t1.daumcdn.net/mapjsapi/bundle/postcode/prod/postcode.v2.js"></script>
   <script src="https://unpkg.com/tesseract.js@5/dist/tesseract.min.js"></script>
-  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
-  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
     html, body { height: 100%; overflow: hidden; font-family: 'Malgun Gothic', 'Apple SD Gothic Neo', sans-serif; }
@@ -795,24 +793,31 @@ function geocodeAddr(rawAddr) {
 }
 
 // ════════════ Leaflet 지도 (카카오 지오코딩) ════════════
-let leafMap = null;
+let kakaoMapInst = null;
+let kakaoReady = false;
+kakao.maps.load(() => { kakaoReady = true; try { geocoder = new kakao.maps.services.Geocoder(); } catch(e) {} });
 
 function escHtml(s) {
   return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
 }
-function makeMarkerIcon(item, highlight) {
+function markerContent(item, highlight) {
   const bg  = highlight ? '#0D47A1' : (item.urgent ? '#B71C1C' : '#1A237E');
-  const lbl = item.full.split('/')[0].slice(-8);
-  return L.divIcon({
-    className: '',
-    html: `<div style="background:${bg};color:white;padding:2px 6px 4px;border-radius:3px;
-                font-family:sans-serif;text-align:center;min-width:34px;max-width:90px;
-                box-shadow:0 2px 5px rgba(0,0,0,.5);">
-             <div style="font-size:10px;line-height:1.3;">${escHtml(lbl)}</div>
-             <div style="font-size:18px;font-weight:bold;line-height:1.1;">${item.order}</div>
-           </div>`,
-    iconAnchor: [0, 40]
+  const lbl = escHtml(item.full.split('/')[0].slice(-8));
+  return `<div style="background:${bg};color:white;padding:2px 6px 4px;border-radius:3px;
+              font-family:sans-serif;text-align:center;min-width:34px;max-width:90px;
+              box-shadow:0 2px 5px rgba(0,0,0,.5);">
+            <div style="font-size:10px;line-height:1.3;">${lbl}</div>
+            <div style="font-size:18px;font-weight:bold;line-height:1.1;">${item.order}</div>
+          </div>`;
+}
+function addKakaoOverlay(map, item, highlight) {
+  const ov = new kakao.maps.CustomOverlay({
+    position: new kakao.maps.LatLng(item.lat, item.lng),
+    content: markerContent(item, highlight),
+    yAnchor: 1.3
   });
+  ov.setMap(map);
+  return ov;
 }
 
 function openMapScreen(title, renderFn) {
@@ -820,38 +825,42 @@ function openMapScreen(title, renderFn) {
   document.getElementById('map-title').textContent = title;
   document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
   document.getElementById('screen-map').classList.add('active');
-  if (leafMap) { try { leafMap.remove(); } catch(e) {} leafMap = null; }
+  kakaoMapInst = null;
   setTimeout(async () => {
     try { await renderFn(); }
     catch(e) { toast('지도오류: ' + (e.message || '').slice(0, 40)); }
-  }, 200);
+  }, 250);
 }
 
-function makeLeafMap(lat, lng, zoom) {
+function makeKakaoMap(lat, lng, level) {
   const container = document.getElementById('kakao-map');
   const headerH = document.querySelector('#screen-map .header').offsetHeight || 52;
-  container.innerHTML = ''; container.className = '';
+  container.innerHTML = '';
   container.style.cssText = `display:block;width:100%;height:${window.innerHeight - headerH}px;`;
-  leafMap = L.map(container).setView([lat, lng], zoom);
-  L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-    maxZoom: 19, attribution: '© OpenStreetMap'
-  }).addTo(leafMap);
-  setTimeout(() => leafMap && leafMap.invalidateSize(), 300);
-  return leafMap;
+  const map = new kakao.maps.Map(container, {
+    center: new kakao.maps.LatLng(lat, lng),
+    level: level
+  });
+  setTimeout(() => map.relayout(), 100);
+  kakaoMapInst = map;
+  return map;
 }
 
 function showMap(mode) {
   openMapScreen(mode === 'current' ? '내 위치' : '배송지 지도', async () => {
     if (mode === 'current') {
       navigator.geolocation.getCurrentPosition(pos => {
-        const map = makeLeafMap(pos.coords.latitude, pos.coords.longitude, 15);
-        L.marker([pos.coords.latitude, pos.coords.longitude]).addTo(map)
-          .bindPopup('📍 현재 위치').openPopup();
-      }, () => { toast('위치 권한을 허용해주세요'); makeLeafMap(35.5371, 129.3115, 13); });
+        const map = makeKakaoMap(pos.coords.latitude, pos.coords.longitude, 3);
+        new kakao.maps.CustomOverlay({
+          position: new kakao.maps.LatLng(pos.coords.latitude, pos.coords.longitude),
+          content: '<div style="background:#e53935;color:white;padding:4px 8px;border-radius:12px;font-size:13px;box-shadow:0 2px 5px rgba(0,0,0,.4);">📍 현재위치</div>',
+          yAnchor: 1.3
+        }).setMap(map);
+      }, () => { toast('위치 권한을 허용해주세요'); makeKakaoMap(35.5371, 129.3115, 5); });
     } else {
       const today = todayStr();
       const todayItems = items.filter(x => x.date === today);
-      if (!todayItems.length) { makeLeafMap(35.5371, 129.3115, 13); toast('오늘 등록된 배송지가 없습니다'); return; }
+      if (!todayItems.length) { makeKakaoMap(35.5371, 129.3115, 5); toast('오늘 등록된 배송지가 없습니다'); return; }
 
       const needGeo = todayItems.filter(x => !x.lat || !x.lng);
       if (needGeo.length) {
@@ -864,16 +873,15 @@ function showMap(mode) {
       }
 
       const geo = todayItems.filter(x => x.lat && x.lng);
-      if (!geo.length) { makeLeafMap(35.5371, 129.3115, 13); toast('주소 좌표를 찾을 수 없습니다'); return; }
+      if (!geo.length) { makeKakaoMap(35.5371, 129.3115, 5); toast('주소 좌표를 찾을 수 없습니다'); return; }
 
-      const map = makeLeafMap(geo[0].lat, geo[0].lng, 13);
-      const bounds = [];
+      const map = makeKakaoMap(geo[0].lat, geo[0].lng, 5);
+      const bounds = new kakao.maps.LatLngBounds();
       geo.forEach(item => {
-        bounds.push([item.lat, item.lng]);
-        L.marker([item.lat, item.lng], { icon: makeMarkerIcon(item, false) }).addTo(map)
-          .bindPopup(`<b>${item.order}:</b> ${escHtml(item.full)}${item.urgent?' 🔴':''}`);
+        bounds.extend(new kakao.maps.LatLng(item.lat, item.lng));
+        addKakaoOverlay(map, item, false);
       });
-      map.fitBounds(bounds, { padding: [30, 30] });
+      setTimeout(() => map.setBounds(bounds), 150);
     }
   });
 }
@@ -918,18 +926,16 @@ async function showMapItem(id) {
 }
 function _renderSingleMap(item) {
   openMapScreen(`${item.order}:${item.full}`, () => {
-    const map = makeLeafMap(item.lat, item.lng, 16);
+    const map = makeKakaoMap(item.lat, item.lng, 3);
     const today = todayStr();
     items.filter(x => x.date === today && x.lat && x.lng && x.id !== item.id)
-      .forEach(x => L.marker([x.lat, x.lng], { icon: makeMarkerIcon(x, false) }).addTo(map));
-    const sel = L.marker([item.lat, item.lng], { icon: makeMarkerIcon(item, true) }).addTo(map);
-    sel.bindPopup(escHtml(item.full)).openPopup();
+      .forEach(x => addKakaoOverlay(map, x, false));
+    addKakaoOverlay(map, item, true);
   });
 }
 
 // ════════════ 초기화 ════════════
 let geocoder = null;
-try { geocoder = new kakao.maps.services.Geocoder(); } catch(e) {}
 document.getElementById('addr-before').focus();
 </script>
 </body>
